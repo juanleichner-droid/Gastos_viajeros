@@ -86,7 +86,7 @@ grupo_id = st.sidebar.number_input("ID del Viaje", min_value=1, value=1, step=1)
 viajeros_input = st.sidebar.text_input("Viajeros (separados por coma)", value="Gloria, Mario, Liliana, Luis, Orestes, Juan")
 viajeros = [v.strip() for v in viajeros_input.split(",") if v.strip()]
 
-st.title("✈️ GASTOS COMUNES DEL VIAJE")
+st.title("🚙 GASTOS COMUNES DEL VIAJE")
 
 # 4 PESTAÑAS
 tab1, tab2, tab3, tab4 = st.tabs([
