@@ -7,9 +7,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Configuración de página adaptable a celular y PC
 st.set_page_config(page_title="Gastos de Viaje", page_icon="✈️", layout="wide")
 
-# --- CONEXIÓN A BASE DE DATOS LOCAL ---
-DATABASE_URL = "sqlite:///./gastos_viaje.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# --- CONEXIÓN A BASE DE DATOS EN LA NUBE (NEON POSTGRESQL) ---
+DATABASE_URL = "postgresql://neondb_owner:npg_qIJk93MutBlR@ep-lucky-poetry-b5t0p12u-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require"
+engine = create_engine(DATABASE_URL))
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
