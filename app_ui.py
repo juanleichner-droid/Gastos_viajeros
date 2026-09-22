@@ -9,7 +9,7 @@ st.set_page_config(page_title="Gastos de Viaje", page_icon="✈️", layout="wid
 
 # --- CONEXIÓN A BASE DE DATOS EN LA NUBE (NEON POSTGRESQL) ---
 DATABASE_URL = "postgresql://neondb_owner:npg_qIJk93MutBlR@ep-lucky-poetry-b5t0p12u-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require"
-engine = create_engine(DATABASE_URL))
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
