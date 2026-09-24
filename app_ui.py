@@ -47,9 +47,9 @@ class SettlementPayment(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# --- VIAJEROS DEFINIDOS ---
-VIAJEROS = ["Juan", "Lucas", "Agustin", "Marcos"]
-CATEGORIAS = ["Comida / Restaurante", "Combustible / Peajes", "Alojamiento", "Supermercado", "Excursiones / Entradas", "Varios"]
+# --- VIAJEROS Y CATEGORÍAS DEFINIDOS ---
+VIAJEROS = ["Gloria", "Mario", "Liliana", "Luis", "Orestes", "Juan"]
+CATEGORIAS = ["Alojamiento", "Autos","Comida / Restaurante", "Combustible / Peajes", "Alojamiento", "Supermercado", "Excursiones / Entradas", "Varios"]
 
 # --- FUNCIONES DE BASE DE DATOS ---
 def get_db():
@@ -91,11 +91,67 @@ def guardar_gasto(descripcion, pagador, monto_pesificado, moneda, monto_orig, tc
     db.commit()
     db.close()
 
+def actualizar_gasto(gasto_id, descripcion, pagador, monto_pesificado, moneda, monto_orig, tc, categoria, beneficiarios):
+    db = get_db()
+    gasto = db.query(Expense).filter(Expense.id == gasto_id).first()
+    if gasto:
+        desc_final = descripcion
+        if moneda == "USD":
+            desc_final = f"{descripcion} (US$ {monto_orig:.2f} @ ${tc:,.2f})"
+            
+        gasto.description = desc_final
+        gasto.payer = pagador
+        gasto.amount_ars = monto_pesificado
+        gasto.currency = moneda
+        gasto.original_amount = monto_orig
+        gasto.exchange_rate = tc
+        gasto.category = categoria
+        
+        # Eliminar asignaciones viejas y rehacerlas
+        db.query(ExpenseSplit).filter(ExpenseSplit.expense_id == gasto_id).delete()
+        monto_por_cabeza = monto_pesificado / len(beneficiarios)
+        for persona in beneficiarios:
+            split = ExpenseSplit(
+                expense_id=gasto.id,
+                person=persona,
+                assigned_amount=monto_por_cabeza
+            )
+            db.add(split)
+            
+        db.commit()
+    db.close()
+
+def eliminar_gasto(gasto_id):
+    db = get_db()
+    gasto = db.query(Expense).filter(Expense.id == gasto_id).first()
+    if gasto:
+        db.delete(gasto)
+        db.commit()
+    db.close()
+
 def guardar_pago(pagador, receptor, monto):
     db = get_db()
     pago = SettlementPayment(payer=pagador, receiver=receptor, amount=monto)
     db.add(pago)
     db.commit()
+    db.close()
+
+def actualizar_pago(pago_id, pagador, receptor, monto):
+    db = get_db()
+    pago = db.query(SettlementPayment).filter(SettlementPayment.id == pago_id).first()
+    if pago:
+        pago.payer = pagador
+        pago.receiver = receptor
+        pago.amount = monto
+        db.commit()
+    db.close()
+
+def eliminar_pago(pago_id):
+    db = get_db()
+    pago = db.query(SettlementPayment).filter(SettlementPayment.id == pago_id).first()
+    if pago:
+        db.delete(pago)
+        db.commit()
     db.close()
 
 # --- ENCABEZADO ---
@@ -106,20 +162,19 @@ st.caption("Gestor de gastos compartidos en pesos y dólares — Persistencia en
 tab_cargar, tab_balance, tab_historial, tab_pagos = st.tabs([
     "➕ Cargar Gasto", 
     "⚖️ Balance y Deudas", 
-    "📋 Historial de Gastos", 
+    "📋 Historial y Edición", 
     "💸 Registrar Transferencia"
 ])
 
 # ==========================================
-# 1. CARGAR GASTO (CON CONVERSOR A DÓLAR)
+# 1. CARGAR GASTO
 # ==========================================
 with tab_cargar:
     st.subheader("Nuevo Gasto Compartido")
     
-    # 1. Selector de moneda interactivo (fuera del form para reaccionar al instante)
     col_m1, col_m2 = st.columns([1, 2])
     with col_m1:
-        moneda_sel = st.radio("Moneda", ["ARS ($)", "USD (US$)"], horizontal=True)
+        moneda_sel = st.radio("Moneda", ["ARS ($)", "USD (US$)"], horizontal=True, key="radio_moneda_nuevo")
         es_dolar = "USD" in moneda_sel
 
     with st.form("form_nuevo_gasto", clear_on_submit=True):
@@ -136,7 +191,7 @@ with tab_cargar:
         if es_dolar:
             col_u1, col_u2 = st.columns(2)
             with col_u1:
-                monto_input = st.number_input("Monto en Dólares (US$)", min_value=0.0, step=1.0, format="%.2f")
+                monto_input = st.number_input("Monto en Dólares (US$)", min_value=0.0, step=1.0, format="%.2f", key="input_usd_nuevo")
             with col_u2:
                 tipo_cambio = st.number_input(
                     "Tipo de cambio (1 USD = X ARS)", 
@@ -144,12 +199,12 @@ with tab_cargar:
                     value=1350.0, 
                     step=10.0, 
                     format="%.2f",
-                    help="Cotización para convertir el gasto a pesos"
+                    key="input_tc_nuevo"
                 )
             monto_pesificado = monto_input * tipo_cambio
             st.info(f"💵 **Total convertido a pesos:** ${monto_pesificado:,.2f} ARS *(US$ {monto_input:,.2f} × ${tipo_cambio:,.2f})*")
         else:
-            monto_input = st.number_input("Monto en Pesos ($ ARS)", min_value=0.0, step=100.0, format="%.2f")
+            monto_input = st.number_input("Monto en Pesos ($ ARS)", min_value=0.0, step=100.0, format="%.2f", key="input_ars_nuevo")
             tipo_cambio = 1.0
             monto_pesificado = monto_input
             
@@ -192,24 +247,20 @@ with tab_balance:
     st.subheader("Estado de Cuentas y Saldos")
     db = get_db()
     
-    # Calcular saldos netos
     netos = {v: 0.0 for v in VIAJEROS}
     total_gastado = 0.0
     
-    # Gastos pagados
     gastos = db.query(Expense).all()
     for g in gastos:
         if g.payer in netos:
             netos[g.payer] += g.amount_ars
             total_gastado += g.amount_ars
             
-    # Partes consumidas
     splits = db.query(ExpenseSplit).all()
     for s in splits:
         if s.person in netos:
             netos[s.person] -= s.assigned_amount
             
-    # Transferencias realizadas entre ellos
     pagos = db.query(SettlementPayment).all()
     for p in pagos:
         if p.payer in netos:
@@ -270,7 +321,7 @@ with tab_balance:
                 st.warning(f"👉 **{d}** le debe transferir **${m:,.2f} ARS** a **{a}**")
 
 # ==========================================
-# 3. HISTORIAL DE GASTOS
+# 3. HISTORIAL, EDICIÓN Y ELIMINACIÓN DE GASTOS
 # ==========================================
 with tab_historial:
     st.subheader("Historial Detallado de Gastos")
@@ -281,8 +332,10 @@ with tab_historial:
         st.info("No hay gastos registrados todavía.")
     else:
         filas = []
+        opciones_gastos = {}
         for g in gastos_list:
             filas.append({
+                "ID": g.id,
                 "Fecha": g.created_at.strftime("%d/%m/%Y %H:%M"),
                 "Descripción": g.description,
                 "Categoría": g.category,
@@ -291,30 +344,178 @@ with tab_historial:
                 "Monto Orig.": f"{'US$ ' if g.currency == 'USD' else '$ '}{g.original_amount:,.2f}",
                 "Total Pesificado": f"${g.amount_ars:,.2f} ARS"
             })
+            opciones_gastos[g.id] = f"#{g.id} - {g.description} (${g.amount_ars:,.2f} ARS | Pagó: {g.payer})"
+            
         st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("⚙️ Modificar o Eliminar un Gasto")
+        
+        gasto_sel_id = st.selectbox(
+            "Seleccionar gasto a gestionar",
+            options=list(opciones_gastos.keys()),
+            format_func=lambda x: opciones_gastos[x],
+            key="select_gasto_gestionar"
+        )
+        
+        gasto_obj = db.query(Expense).filter(Expense.id == gasto_sel_id).first()
+        participantes_actuales = [s.person for s in gasto_obj.splits] if gasto_obj else []
+        
+        col_acc1, col_acc2 = st.columns([1, 1])
+        with col_acc1:
+            mostrar_edicion = st.toggle("✏️ Abrir formulario de edición", value=False)
+        with col_acc2:
+            if st.button("🗑️ Eliminar este gasto", type="secondary", use_container_width=True):
+                eliminar_gasto(gasto_sel_id)
+                st.success(f"Gasto #{gasto_sel_id} eliminado correctamente.")
+                st.rerun()
+                
+        if mostrar_edicion and gasto_obj:
+            st.markdown("##### Editar datos del Gasto")
+            with st.form("form_editar_gasto"):
+                # Limpiar texto de descripción si contenía la etiqueta de USD previa
+                desc_base = gasto_obj.description.split(" (US$")[0]
+                nueva_desc = st.text_input("Descripción", value=desc_base)
+                
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    idx_pag = VIAJEROS.index(gasto_obj.payer) if gasto_obj.payer in VIAJEROS else 0
+                    nuevo_pagador = st.selectbox("Quién pagó", VIAJEROS, index=idx_pag, key="edit_pagador")
+                with col_e2:
+                    idx_cat = CATEGORIAS.index(gasto_obj.category) if gasto_obj.category in CATEGORIAS else 0
+                    nueva_cat = st.selectbox("Categoría", CATEGORIAS, index=idx_cat, key="edit_categoria")
+                    
+                col_em1, col_em2, col_em3 = st.columns(3)
+                with col_em1:
+                    nueva_moneda = st.selectbox("Moneda", ["ARS", "USD"], index=0 if gasto_obj.currency == "ARS" else 1, key="edit_moneda")
+                with col_em2:
+                    nuevo_monto_orig = st.number_input("Monto Original", value=float(gasto_obj.original_amount), step=1.0, format="%.2f", key="edit_orig")
+                with col_em3:
+                    nuevo_tc = st.number_input("Tipo de Cambio", value=float(gasto_obj.exchange_rate), step=10.0, format="%.2f", key="edit_tc")
+                    
+                monto_pesificado_edit = nuevo_monto_orig * nuevo_tc if nueva_moneda == "USD" else nuevo_monto_orig
+                st.info(f"💵 Total Pesificado: **${monto_pesificado_edit:,.2f} ARS**")
+                
+                st.write("**Participantes:**")
+                nuevos_part = []
+                col_ep = st.columns(len(VIAJEROS))
+                for i, v in enumerate(VIAJEROS):
+                    with col_ep[i]:
+                        activo = v in participantes_actuales
+                        if st.checkbox(v, value=activo, key=f"edit_part_{v}"):
+                            nuevos_part.append(v)
+                            
+                guardar_edit = st.form_submit_button("Guardar Cambios del Gasto", type="primary", use_container_width=True)
+                if guardar_edit:
+                    if not nueva_desc.strip():
+                        st.error("Ingresa una descripción.")
+                    elif nuevo_monto_orig <= 0:
+                        st.error("El monto debe ser mayor a 0.")
+                    elif not nuevos_part:
+                        st.error("Debe haber al menos un participante.")
+                    else:
+                        actualizar_gasto(
+                            gasto_id=gasto_sel_id,
+                            descripcion=nueva_desc.strip(),
+                            pagador=nuevo_pagador,
+                            monto_pesificado=monto_pesificado_edit,
+                            moneda=nueva_moneda,
+                            monto_orig=nuevo_monto_orig,
+                            tc=nuevo_tc,
+                            categoria=nueva_cat,
+                            beneficiarios=nuevos_part
+                        )
+                        st.success("Gasto actualizado con éxito.")
+                        st.rerun()
     db.close()
 
 # ==========================================
-# 4. REGISTRAR TRANSFERENCIA ENTRE VIAJEROS
+# 4. TRANSFERENCIAS ENTRE VIAJEROS (CREAR, EDITAR, ELIMINAR)
 # ==========================================
 with tab_pagos:
-    st.subheader("Asentar Transferencia Realizada")
-    st.caption("Utiliza esta opción cuando un integrante le transfiera plata a otro para saldar deudas.")
+    st.subheader("Registrar y Gestionar Transferencias")
+    st.caption("Usa esta pestaña cuando un viajero transfiera dinero a otro para saldar deudas.")
     
-    with st.form("form_pago", clear_on_submit=True):
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            deudor_pago = st.selectbox("Quién transfirió (pagó)", VIAJEROS, key="pago_deudor")
-        with col_p2:
-            acreedor_pago = st.selectbox("Quién recibió la plata", [v for v in VIAJEROS if v != deudor_pago], key="pago_acreedor")
+    # Formulario para cargar nuevo pago
+    with st.expander("➕ Cargar nueva transferencia", expanded=True):
+        with st.form("form_pago", clear_on_submit=True):
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                deudor_pago = st.selectbox("Quién transfirió (pagó)", VIAJEROS, key="pago_deudor")
+            with col_p2:
+                acreedor_pago = st.selectbox("Quién recibió la plata", [v for v in VIAJEROS if v != deudor_pago], key="pago_acreedor")
+                
+            monto_transferido = st.number_input("Monto transferido en Pesos ($ ARS)", min_value=0.0, step=100.0, format="%.2f")
+            submit_pago = st.form_submit_button("Registrar Transferencia", type="primary", use_container_width=True)
             
-        monto_transferido = st.number_input("Monto transferido en Pesos ($ ARS)", min_value=0.0, step=100.0, format="%.2f")
-        submit_pago = st.form_submit_button("Registrar Transferencia", type="primary", use_container_width=True)
+            if submit_pago:
+                if monto_transferido <= 0:
+                    st.error("El monto de la transferencia debe ser mayor a 0.")
+                else:
+                    guardar_pago(deudor_pago, acreedor_pago, monto_transferido)
+                    st.success(f"Transferencia de ${monto_transferido:,.2f} ARS registrada.")
+                    st.rerun()
+                    
+    st.markdown("---")
+    st.subheader("📋 Historial y Edición de Transferencias")
+    db = get_db()
+    pagos_list = db.query(SettlementPayment).order_by(SettlementPayment.created_at.desc()).all()
+    
+    if not pagos_list:
+        st.info("No hay transferencias registradas todavía.")
+    else:
+        filas_pagos = []
+        opciones_pagos = {}
+        for p in pagos_list:
+            filas_pagos.append({
+                "ID": p.id,
+                "Fecha": p.created_at.strftime("%d/%m/%Y %H:%M"),
+                "De (Transfirió)": p.payer,
+                "Para (Recibió)": p.receiver,
+                "Monto": f"${p.amount:,.2f} ARS"
+            })
+            opciones_pagos[p.id] = f"#{p.id} - {p.payer} ➔ {p.receiver} (${p.amount:,.2f} ARS)"
+            
+        st.dataframe(pd.DataFrame(filas_pagos), hide_index=True, use_container_width=True)
         
-        if submit_pago:
-            if monto_transferido <= 0:
-                st.error("El monto de la transferencia debe ser mayor a 0.")
-            else:
-                guardar_pago(deudor_pago, acreedor_pago, monto_transferido)
-                st.success(f"Transferencia de ${monto_transferido:,.2f} ARS registrada correctamente.")
+        col_sel_p, col_del_p = st.columns([3, 1])
+        with col_sel_p:
+            pago_sel_id = st.selectbox(
+                "Seleccionar transferencia para modificar o borrar",
+                options=list(opciones_pagos.keys()),
+                format_func=lambda x: opciones_pagos[x],
+                key="select_pago_gestionar"
+            )
+        with col_del_p:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Eliminar Pago", type="secondary", use_container_width=True, key="btn_del_pago"):
+                eliminar_pago(pago_sel_id)
+                st.success(f"Transferencia #{pago_sel_id} eliminada.")
                 st.rerun()
+                
+        pago_obj = db.query(SettlementPayment).filter(SettlementPayment.id == pago_sel_id).first()
+        if pago_obj:
+            mostrar_edit_pago = st.toggle("✏️ Editar monto o participantes de esta transferencia", value=False, key="toggle_edit_pago")
+            if mostrar_edit_pago:
+                with st.form("form_edit_pago"):
+                    col_ep1, col_ep2 = st.columns(2)
+                    with col_ep1:
+                        idx_d = VIAJEROS.index(pago_obj.payer) if pago_obj.payer in VIAJEROS else 0
+                        nuevo_deudor = st.selectbox("Quién transfirió", VIAJEROS, index=idx_d, key="edit_d_pago")
+                    with col_ep2:
+                        posibles_rec = [v for v in VIAJEROS if v != nuevo_deudor]
+                        idx_r = posibles_rec.index(pago_obj.receiver) if pago_obj.receiver in posibles_rec else 0
+                        nuevo_receptor = st.selectbox("Quién recibió", posibles_rec, index=idx_r, key="edit_r_pago")
+                        
+                    nuevo_monto_p = st.number_input("Monto en Pesos ($ ARS)", value=float(pago_obj.amount), step=100.0, format="%.2f", key="edit_monto_pago")
+                    guardar_pago_btn = st.form_submit_button("Guardar Cambios de Transferencia", type="primary", use_container_width=True)
+                    
+                    if guardar_pago_btn:
+                        if nuevo_monto_p <= 0:
+                            st.error("El monto debe ser mayor a 0.")
+                        else:
+                            actualizar_pago(pago_sel_id, nuevo_deudor, nuevo_receptor, nuevo_monto_p)
+                            st.success("Transferencia actualizada con éxito.")
+                            st.rerun()
+    db.close()
