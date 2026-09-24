@@ -117,8 +117,14 @@ tab_cargar, tab_balance, tab_historial, tab_pagos = st.tabs([
 with tab_cargar:
     st.subheader("Nuevo Gasto Compartido")
     
+    # 1. Selector de moneda interactivo (fuera del form para reaccionar al instante)
+    col_m1, col_m2 = st.columns([1, 2])
+    with col_m1:
+        moneda_sel = st.radio("Moneda", ["ARS ($)", "USD (US$)"], horizontal=True)
+        es_dolar = "USD" in moneda_sel
+
     with st.form("form_nuevo_gasto", clear_on_submit=True):
-        descripcion = st.text_input("Descripción del gasto", placeholder="Ej: Cena en restaurante, Nafta estación YPF")
+        descripcion = st.text_input("Descripción del gasto", placeholder="Ej: Cena en restaurante, Nafta")
         
         col_pag, col_cat = st.columns(2)
         with col_pag:
@@ -127,32 +133,26 @@ with tab_cargar:
             categoria = st.selectbox("Categoría", CATEGORIAS)
             
         st.markdown("---")
-        col_moneda, col_monto = st.columns([1, 2])
-        with col_moneda:
-            moneda_sel = st.selectbox("Moneda", ["ARS ($)", "USD (US$)"], index=0)
-            es_dolar = "USD" in moneda_sel
-        with col_monto:
-            monto_input = st.number_input(
-                f"Monto en {'USD' if es_dolar else 'ARS'}", 
-                min_value=0.0, 
-                step=1.0, 
-                format="%.2f"
-            )
-            
-        tipo_cambio = 1.0
-        monto_pesificado = monto_input
         
         if es_dolar:
-            tipo_cambio = st.number_input(
-                "Tipo de cambio (1 USD = X ARS)", 
-                min_value=1.0, 
-                value=1350.0, 
-                step=10.0, 
-                format="%.2f",
-                help="Cotización para convertir el gasto a pesos argentinos"
-            )
+            col_u1, col_u2 = st.columns(2)
+            with col_u1:
+                monto_input = st.number_input("Monto en Dólares (US$)", min_value=0.0, step=1.0, format="%.2f")
+            with col_u2:
+                tipo_cambio = st.number_input(
+                    "Tipo de cambio (1 USD = X ARS)", 
+                    min_value=1.0, 
+                    value=1350.0, 
+                    step=10.0, 
+                    format="%.2f",
+                    help="Cotización para convertir el gasto a pesos"
+                )
             monto_pesificado = monto_input * tipo_cambio
-            st.info(f"💵 **Total a repartir en pesos:** ${monto_pesificado:,.2f} ARS *(US$ {monto_input:,.2f} × ${tipo_cambio:,.2f})*")
+            st.info(f"💵 **Total convertido a pesos:** ${monto_pesificado:,.2f} ARS *(US$ {monto_input:,.2f} × ${tipo_cambio:,.2f})*")
+        else:
+            monto_input = st.number_input("Monto en Pesos ($ ARS)", min_value=0.0, step=100.0, format="%.2f")
+            tipo_cambio = 1.0
+            monto_pesificado = monto_input
             
         st.markdown("---")
         st.write("**¿Entre quiénes se divide el gasto?**")
@@ -183,7 +183,7 @@ with tab_cargar:
                     categoria=categoria,
                     beneficiarios=participantes
                 )
-                st.success(f"¡Gasto registrado con éxito! (${monto_pesificado:,.2f} ARS)")
+                st.success(f"¡Gasto registrado! Total: ${monto_pesificado:,.2f} ARS")
                 st.rerun()
 
 # ==========================================
