@@ -45,7 +45,6 @@ class SettlementPayment(Base):
     amount = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
 # --- VIAJEROS DEFINIDOS ---
