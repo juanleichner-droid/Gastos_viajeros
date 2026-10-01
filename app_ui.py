@@ -279,7 +279,7 @@ with tab_balance:
             {
                 "Viajero": v, 
                 "Saldo Neto (ARS)": f"${s:,.2f}", 
-                "Condición": "Le deben cobrar 🟢" if s > 0.01 else ("Debe pagar 🔴" if s < -0.01 else "Al día ⚪")
+                "Condición": "Debe cobrar 🟢" if s > 0.01 else ("Debe pagar 🔴" if s < -0.01 else "Saldado ⚪")
             }
             for v, s in netos.items()
         ])
