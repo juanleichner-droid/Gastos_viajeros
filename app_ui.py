@@ -196,7 +196,7 @@ with tab_cargar:
                 tipo_cambio = st.number_input(
                     "Tipo de cambio (1 USD = X ARS)", 
                     min_value=1.0, 
-                    value=1350.0, 
+                    value=1550.0, 
                     step=10.0, 
                     format="%.2f",
                     key="input_tc_nuevo"
