@@ -299,8 +299,8 @@ with tab_balance:
             
         filas_resumen.append({
             "Viajero": v,
-            "Pagó realizado": f"${p_bolsillo:,.2f}",
-            "Consumo realizado": f"${c_asignado:,.2f}",
+            "Pago realizado": f"${p_bolsillo:,.2f}",
+            "Consumo a cancelar": f"${c_asignado:,.2f}",
             "Transferencias": f"+${t_hecha:,.2f} / -${t_recibida:,.2f}" if (t_hecha > 0 or t_recibida > 0) else "$0.00",
             "Saldo Neto (ARS)": f"${saldo_neto:,.2f}",
             "Condición": condicion
