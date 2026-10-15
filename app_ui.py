@@ -247,79 +247,106 @@ with tab_balance:
     st.subheader("Estado de Cuentas y Saldos")
     db = get_db()
     
-    netos = {v: 0.0 for v in VIAJEROS}
+    # Estructuras para acumular los importes de cada viajero
+    pagado_bolsillo = {v: 0.0 for v in VIAJEROS}
+    consumo_asignado = {v: 0.0 for v in VIAJEROS}
+    transferencias_hechas = {v: 0.0 for v in VIAJEROS}
+    transferencias_recibidas = {v: 0.0 for v in VIAJEROS}
     total_gastado = 0.0
     
+    # 1. Gastos pagados
     gastos = db.query(Expense).all()
     for g in gastos:
-        if g.payer in netos:
-            netos[g.payer] += g.amount_ars
+        if g.payer in pagado_bolsillo:
+            pagado_bolsillo[g.payer] += g.amount_ars
             total_gastado += g.amount_ars
             
+    # 2. Consumo individual asignado (lo que le correspondía pagar)
     splits = db.query(ExpenseSplit).all()
     for s in splits:
-        if s.person in netos:
-            netos[s.person] -= s.assigned_amount
+        if s.person in consumo_asignado:
+            consumo_asignado[s.person] += s.assigned_amount
             
+    # 3. Transferencias registradas entre viajeros
     pagos = db.query(SettlementPayment).all()
     for p in pagos:
-        if p.payer in netos:
-            netos[p.payer] += p.amount
-        if p.receiver in netos:
-            netos[p.receiver] -= p.amount
+        if p.payer in transferencias_hechas:
+            transferencias_hechas[p.payer] += p.amount
+        if p.receiver in transferencias_recibidas:
+            transferencias_recibidas[p.receiver] += p.amount
             
     db.close()
     
+    # Saldo Neto = (Pagó de su bolsillo + Transfirió) - (Le correspondía consumir + Le transfirieron)
+    netos = {}
+    filas_resumen = []
+    for v in VIAJEROS:
+        p_bolsillo = pagado_bolsillo[v]
+        c_asignado = consumo_asignado[v]
+        t_hecha = transferencias_hechas[v]
+        t_recibida = transferencias_recibidas[v]
+        
+        # Saldo final
+        saldo_neto = (p_bolsillo + t_hecha) - (c_asignado + t_recibida)
+        netos[v] = saldo_neto
+        
+        if saldo_neto > 0.01:
+            condicion = "Debe cobrar 🟢"
+        elif saldo_neto < -0.01:
+            condicion = "Debe pagar 🔴"
+        else:
+            condicion = "Al día ⚪"
+            
+        filas_resumen.append({
+            "Viajero": v,
+            "Pagó (Bolsillo)": f"${p_bolsillo:,.2f}",
+            "Consumo (Debería pagar)": f"${c_asignado:,.2f}",
+            "Transferencias": f"+${t_hecha:,.2f} / -${t_recibida:,.2f}" if (t_hecha > 0 or t_recibida > 0) else "$0.00",
+            "Saldo Neto (ARS)": f"${saldo_neto:,.2f}",
+            "Condición": condicion
+        })
+    
     st.metric("Total General Gastado (Pesificado)", f"${total_gastado:,.2f} ARS")
     
-    col_bal1, col_bal2 = st.columns(2)
-    with col_bal1:
-        st.markdown("#### Saldos individuales")
-        df_netos = pd.DataFrame([
-            {
-                "Viajero": v, 
-                "Saldo Neto (ARS)": f"${s:,.2f}", 
-                "Condición": "Debe cobrar 🟢" if s > 0.01 else ("Debe pagar 🔴" if s < -0.01 else "Saldado ⚪")
-            }
-            for v, s in netos.items()
-        ])
-        st.dataframe(df_netos, hide_index=True, use_container_width=True)
+    st.markdown("#### Detalle por Viajero")
+    df_netos = pd.DataFrame(filas_resumen)
+    st.dataframe(df_netos, hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    st.markdown("#### ¿Cómo saldar las deudas?")
+    deudores = [(v, -s) for v, s in netos.items() if s < -0.01]
+    acreedores = [(v, s) for v, s in netos.items() if s > 0.01]
+    
+    deudores.sort(key=lambda x: x[1], reverse=True)
+    acreedores.sort(key=lambda x: x[1], reverse=True)
+    
+    deudas = []
+    i, j = 0, 0
+    deudores_calc = [list(x) for x in deudores]
+    acreedores_calc = [list(x) for x in acreedores]
+    
+    while i < len(deudores_calc) and j < len(acreedores_calc):
+        deudor, d_monto = deudores_calc[i]
+        acreedor, a_monto = acreedores_calc[j]
+        monto_pago = min(d_monto, a_monto)
         
-    with col_bal2:
-        st.markdown("#### ¿Cómo saldar las deudas?")
-        deudores = [(v, -s) for v, s in netos.items() if s < -0.01]
-        acreedores = [(v, s) for v, s in netos.items() if s > 0.01]
-        
-        deudores.sort(key=lambda x: x[1], reverse=True)
-        acreedores.sort(key=lambda x: x[1], reverse=True)
-        
-        deudas = []
-        i, j = 0, 0
-        deudores_calc = [list(x) for x in deudores]
-        acreedores_calc = [list(x) for x in acreedores]
-        
-        while i < len(deudores_calc) and j < len(acreedores_calc):
-            deudor, d_monto = deudores_calc[i]
-            acreedor, a_monto = acreedores_calc[j]
-            monto_pago = min(d_monto, a_monto)
+        if monto_pago > 0.01:
+            deudas.append((deudor, acreedor, monto_pago))
             
-            if monto_pago > 0.01:
-                deudas.append((deudor, acreedor, monto_pago))
-                
-            deudores_calc[i][1] -= monto_pago
-            acreedores_calc[j][1] -= monto_pago
+        deudores_calc[i][1] -= monto_pago
+        acreedores_calc[j][1] -= monto_pago
+        
+        if deudores_calc[i][1] <= 0.01:
+            i += 1
+        if acreedores_calc[j][1] <= 0.01:
+            j += 1
             
-            if deudores_calc[i][1] <= 0.01:
-                i += 1
-            if acreedores_calc[j][1] <= 0.01:
-                j += 1
-                
-        if not deudas:
-            st.success("🎉 ¡Todos están al día! No hay transferencias pendientes.")
-        else:
-            for d, a, m in deudas:
-                st.warning(f"👉 **{d}** le debe transferir **${m:,.2f} ARS** a **{a}**")
-
+    if not deudas:
+        st.success("🎉 ¡Todos están al día! No hay transferencias pendientes.")
+    else:
+        for d, a, m in deudas:
+            st.warning(f"👉 **{d}** le debe transferir **${m:,.2f} ARS** a **{a}**")
+            
 # ==========================================
 # 3. HISTORIAL, EDICIÓN Y ELIMINACIÓN DE GASTOS
 # ==========================================
